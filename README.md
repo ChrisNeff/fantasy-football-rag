@@ -74,6 +74,16 @@ variables (`Foundry__Endpoint`, `Foundry__ChatDeployment`) override it for CI/co
 **no API keys** — `DefaultAzureCredential` uses your `az login` session locally and managed identity
 in Azure.
 
+## Debugging (Zed)
+
+`.zed/debug.json` defines two launch configs — **Debug: model** and **Debug: load**. Set
+breakpoints in `src/Program.cs`, open the debug panel, pick a config, and run. Each builds
+Debug first via `just build-debug`.
+
+Requires the **`netcoredbg`** adapter. Zed offers to install it on first debug run; if it
+doesn't, grab it from [Samsung/netcoredbg releases](https://github.com/Samsung/netcoredbg/releases)
+and put it on your `PATH`.
+
 ## Roadmap
 
 - [x] **W1** Environment + scaffold — Foundry provisioned, keyless model call, corpus parses

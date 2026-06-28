@@ -20,6 +20,10 @@ model:
 load path="data/sample-corpus":
     dotnet run --project src -- load {{path}}
 
+# build with debug symbols (Debug config) — what the editor debugger launches
+build-debug:
+    dotnet build -c Debug
+
 # delete all Azure resources for this project
 teardown:
     ./scripts/teardown-azure.sh

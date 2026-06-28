@@ -1,0 +1,29 @@
+// Zed debug configs for the FF RAG console app.
+// Requires the `netcoredbg` adapter (see README → Debugging).
+// Each config builds Debug first, then launches the DLL with args; set breakpoints in src/Program.cs.
+[
+  {
+    "label": "Debug: model",
+    "adapter": "netcoredbg",
+    "request": "launch",
+    "program": "$ZED_WORKTREE_ROOT/src/bin/Debug/net8.0/FantasyFootballRag.dll",
+    "args": ["model"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "build": {
+      "command": "just",
+      "args": ["build-debug"]
+    }
+  },
+  {
+    "label": "Debug: load",
+    "adapter": "netcoredbg",
+    "request": "launch",
+    "program": "$ZED_WORKTREE_ROOT/src/bin/Debug/net8.0/FantasyFootballRag.dll",
+    "args": ["load"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "build": {
+      "command": "just",
+      "args": ["build-debug"]
+    }
+  }
+]
