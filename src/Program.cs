@@ -1,5 +1,6 @@
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Extensions.Configuration;
 using OpenAI.Chat;
 using Spectre.Console;
 
@@ -8,6 +9,14 @@ using Spectre.Console;
 //   model  -> a real, keyless model call through the Foundry endpoint
 //   load   -> the FF corpus loads + parses and prints a count
 // No ingestion/embedding/retrieval yet — that's W2+.
+
+// Config: appsettings.json is primary (safe to commit — endpoint + deployment are not
+// secrets now that auth is keyless). Environment variables override (handy for CI/containers).
+IConfiguration config = new ConfigurationBuilder()
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: false)
+    .AddEnvironmentVariables()
+    .Build();
 
 string command = args.FirstOrDefault() ?? "help";
 
@@ -29,11 +38,9 @@ switch (command)
 // --- W1 done-bar #2: a model answer prints, via the Foundry endpoint, no API keys ---
 async Task RunModelCheck()
 {
-    string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-        ?? throw new InvalidOperationException(
-            "Set AZURE_OPENAI_ENDPOINT to your Foundry resource endpoint " +
-            "(e.g. https://ff-foundry-cneff.cognitiveservices.azure.com/).");
-    string deployment = Environment.GetEnvironmentVariable("CHAT_DEPLOYMENT") ?? "gpt-5-mini";
+    string endpoint = config["Foundry:Endpoint"]
+        ?? throw new InvalidOperationException("Set Foundry:Endpoint in appsettings.json.");
+    string deployment = config["Foundry:ChatDeployment"] ?? "gpt-5-mini";
 
     AnsiConsole.MarkupLine($"[grey]Endpoint   :[/] {endpoint}");
     AnsiConsole.MarkupLine($"[grey]Deployment :[/] {deployment}");

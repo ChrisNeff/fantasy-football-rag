@@ -43,23 +43,36 @@ docs/                # design + chunking decisions
 ## Getting Started
 
 > Prerequisites: .NET 8 SDK, Azure CLI (`az login`), a subscription that can create a Foundry resource.
+> Optional: [`just`](https://github.com/casey/just) (`brew install just`) for the shortcuts below.
+
+### With `just` (shortcut)
+
+```bash
+just provision   # stand up Foundry + model deployments
+just model       # keyless model call (W1 done-bar #2)
+just load        # parse the sample corpus (W1 done-bar #3)
+```
+
+Run `just` with no args to list all recipes. Or do it the long way:
 
 ```bash
 # 1. Provision Foundry (resource + gpt-5-mini + text-embedding-3-small, GlobalStandard)
 ./scripts/provision-foundry.sh
-# copy the endpoint it prints, then:
-export AZURE_OPENAI_ENDPOINT="https://ff-foundry-cneff.cognitiveservices.azure.com/"
-export CHAT_DEPLOYMENT="gpt-5-mini"
 
-# 2. Verify the keyless model call works (W1 done-bar #2)
+# 2. Confirm src/appsettings.json points at your resource endpoint + deployment
+#    (endpoint + deployment name are NOT secrets — safe to commit, since auth is keyless)
+
+# 3. Verify the keyless model call works (W1 done-bar #2)
 dotnet run --project src -- model
 
-# 3. Load + parse the corpus (W1 done-bar #3)
+# 4. Load + parse the corpus (W1 done-bar #3)
 dotnet run --project src -- load
 ```
 
-There are **no API keys** — `DefaultAzureCredential` uses your `az login` session locally and
-managed identity in Azure.
+Config lives in **`src/appsettings.json`** (committed — endpoint + deployment only). Environment
+variables (`Foundry__Endpoint`, `Foundry__ChatDeployment`) override it for CI/containers. There are
+**no API keys** — `DefaultAzureCredential` uses your `az login` session locally and managed identity
+in Azure.
 
 ## Roadmap
 
