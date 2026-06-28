@@ -1,0 +1,14 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Full / real corpus snapshot (sample-corpus IS committed for a runnable demo)
+data/corpus/

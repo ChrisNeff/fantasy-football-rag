@@ -1,0 +1,93 @@
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using OpenAI.Chat;
+using Spectre.Console;
+
+// Fantasy Football RAG — Build W1 scaffold.
+// Two commands prove the foundation:
+//   model  -> a real, keyless model call through the Foundry endpoint
+//   load   -> the FF corpus loads + parses and prints a count
+// No ingestion/embedding/retrieval yet — that's W2+.
+
+string command = args.FirstOrDefault() ?? "help";
+
+switch (command)
+{
+    case "model":
+        await RunModelCheck();
+        break;
+    case "load":
+        RunCorpusLoad(args.Skip(1).FirstOrDefault() ?? "data/sample-corpus");
+        break;
+    default:
+        AnsiConsole.MarkupLine("[yellow]Usage:[/] dotnet run --project src -- <command>");
+        AnsiConsole.MarkupLine("  [green]model[/]        verify the Foundry model call (keyless auth)");
+        AnsiConsole.MarkupLine("  [green]load [path][/]  load + parse the FF corpus, print counts");
+        break;
+}
+
+// --- W1 done-bar #2: a model answer prints, via the Foundry endpoint, no API keys ---
+async Task RunModelCheck()
+{
+    string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+        ?? throw new InvalidOperationException(
+            "Set AZURE_OPENAI_ENDPOINT to your Foundry resource endpoint " +
+            "(e.g. https://ff-foundry-cneff.cognitiveservices.azure.com/).");
+    string deployment = Environment.GetEnvironmentVariable("CHAT_DEPLOYMENT") ?? "gpt-5-mini";
+
+    AnsiConsole.MarkupLine($"[grey]Endpoint   :[/] {endpoint}");
+    AnsiConsole.MarkupLine($"[grey]Deployment :[/] {deployment}");
+
+    // Keyless: DefaultAzureCredential uses your local `az login` session
+    // (managed identity when running in Azure). No secrets in code or config.
+    var client = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential());
+    ChatClient chat = client.GetChatClient(deployment);
+
+    ChatCompletion completion = await chat.CompleteChatAsync(
+        new UserChatMessage(
+            "In two sentences: is a high-target possession WR or a low-target deep " +
+            "threat generally the safer fantasy WR1 in PPR? Explain the PPR angle."));
+
+    AnsiConsole.WriteLine();
+    AnsiConsole.MarkupLine("[green]✓ Model answered:[/]");
+    AnsiConsole.WriteLine(completion.Content[0].Text);
+    AnsiConsole.WriteLine();
+    AnsiConsole.MarkupLine(
+        "[grey]Note: this answer is ungrounded — general knowledge, not your corpus. " +
+        "Closing that gap is what RAG (W2–W4) is for.[/]");
+}
+
+// --- W1 done-bar #3: corpus files load + parse + print a count ---
+void RunCorpusLoad(string root)
+{
+    if (!Directory.Exists(root))
+    {
+        AnsiConsole.MarkupLine($"[red]Corpus directory not found:[/] {root}");
+        return;
+    }
+
+    string articlesDir = Path.Combine(root, "articles");
+    string statsDir = Path.Combine(root, "stats");
+
+    string[] articles = Directory.Exists(articlesDir)
+        ? Directory.GetFiles(articlesDir, "*.md") : Array.Empty<string>();
+    string[] statFiles = Directory.Exists(statsDir)
+        ? Directory.GetFiles(statsDir, "*.csv") : Array.Empty<string>();
+
+    // Articles chunk structurally on ## headers (see docs/chunking-decisions.md);
+    // each player-week stat row is one atomic record. Just count them here.
+    int articleSections = articles.Sum(a => File.ReadLines(a).Count(l => l.StartsWith("## ")));
+    int statRows = statFiles.Sum(s => Math.Max(0, File.ReadLines(s).Count() - 1)); // minus header
+
+    var table = new Table().Border(TableBorder.Rounded);
+    table.AddColumn("Source");
+    table.AddColumn(new TableColumn("Files").RightAligned());
+    table.AddColumn(new TableColumn("Records").RightAligned());
+    table.AddRow("Articles (.md)", articles.Length.ToString(), $"{articleSections} sections");
+    table.AddRow("Player stats (.csv)", statFiles.Length.ToString(), $"{statRows} rows");
+    AnsiConsole.Write(table);
+
+    AnsiConsole.MarkupLine(
+        $"[green]✓ Parsed {articles.Length + statFiles.Length} corpus files " +
+        $"({articleSections + statRows} records).[/]");
+}
