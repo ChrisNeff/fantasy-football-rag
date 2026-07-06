@@ -12,6 +12,10 @@ build:
 provision:
     ./scripts/provision-foundry.sh
 
+# provision Azure AI Search (Free tier, roles-only auth)
+provision-search:
+    ./scripts/provision-search.sh
+
 # verify the keyless model call works (W1 done-bar #2)
 model:
     dotnet run --project src -- model
@@ -19,6 +23,10 @@ model:
 # load + parse the corpus and print counts (W1 done-bar #3); pass a PATH to override
 load path="data/sample-corpus":
     dotnet run --project src -- load {{path}}
+
+# chunk + embed + index the corpus into Azure AI Search (W2); pass a PATH to override
+ingest path="data/sample-corpus":
+    dotnet run --project src -- ingest {{path}}
 
 # build with debug symbols (Debug config) — what the editor debugger launches
 build-debug:

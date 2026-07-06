@@ -1,14 +1,19 @@
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Azure.Search.Documents;
+using Azure.Search.Documents.Indexes;
+using FantasyFootballRag.Ingestion;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Chat;
+using OpenAI.Embeddings;
 using Spectre.Console;
 
-// Fantasy Football RAG — Build W1 scaffold.
-// Two commands prove the foundation:
+// Fantasy Football RAG — Build W1 scaffold + W2 ingestion.
+// Three commands:
 //   model  -> a real, keyless model call through the Foundry endpoint
 //   load   -> the FF corpus loads + parses and prints a count
-// No ingestion/embedding/retrieval yet — that's W2+.
+//   ingest -> chunk + embed + index the corpus into Azure AI Search
+// No retrieval/chat yet — that's W3+.
 
 // Config: appsettings.json is primary (safe to commit — endpoint + deployment are not
 // secrets now that auth is keyless). Environment variables override (handy for CI/containers).
@@ -28,10 +33,14 @@ switch (command)
     case "load":
         RunCorpusLoad(args.Skip(1).FirstOrDefault() ?? "data/sample-corpus");
         break;
+    case "ingest":
+        await RunIngest(args.Skip(1).FirstOrDefault() ?? "data/sample-corpus");
+        break;
     default:
         AnsiConsole.MarkupLine("[yellow]Usage:[/] dotnet run --project src -- <command>");
         AnsiConsole.MarkupLine("  [green]model[/]        verify the Foundry model call (keyless auth)");
         AnsiConsole.MarkupLine("  [green]load [path][/]  load + parse the FF corpus, print counts");
+        AnsiConsole.MarkupLine("  [green]ingest [path][/] chunk + embed + index the corpus into Azure AI Search");
         break;
 }
 
@@ -64,6 +73,20 @@ async Task RunModelCheck()
         "Closing that gap is what RAG (W2–W4) is for.[/]");
 }
 
+// Shared by `load` and `ingest`: find the corpus's article/stat files under root.
+(string[] Articles, string[] Stats) ScanCorpus(string root)
+{
+    string articlesDir = Path.Combine(root, "articles");
+    string statsDir = Path.Combine(root, "stats");
+
+    string[] articles = Directory.Exists(articlesDir)
+        ? Directory.GetFiles(articlesDir, "*.md") : Array.Empty<string>();
+    string[] statFiles = Directory.Exists(statsDir)
+        ? Directory.GetFiles(statsDir, "*.csv") : Array.Empty<string>();
+
+    return (articles, statFiles);
+}
+
 // --- W1 done-bar #3: corpus files load + parse + print a count ---
 void RunCorpusLoad(string root)
 {
@@ -73,13 +96,7 @@ void RunCorpusLoad(string root)
         return;
     }
 
-    string articlesDir = Path.Combine(root, "articles");
-    string statsDir = Path.Combine(root, "stats");
-
-    string[] articles = Directory.Exists(articlesDir)
-        ? Directory.GetFiles(articlesDir, "*.md") : Array.Empty<string>();
-    string[] statFiles = Directory.Exists(statsDir)
-        ? Directory.GetFiles(statsDir, "*.csv") : Array.Empty<string>();
+    (string[] articles, string[] statFiles) = ScanCorpus(root);
 
     // Articles chunk structurally on ## headers (see docs/chunking-decisions.md);
     // each player-week stat row is one atomic record. Just count them here.
@@ -97,4 +114,66 @@ void RunCorpusLoad(string root)
     AnsiConsole.MarkupLine(
         $"[green]✓ Parsed {articles.Length + statFiles.Length} corpus files " +
         $"({articleSections + statRows} records).[/]");
+}
+
+// --- W2: chunk the corpus, embed the chunks, index them into Azure AI Search ---
+async Task RunIngest(string root)
+{
+    if (!Directory.Exists(root))
+    {
+        AnsiConsole.MarkupLine($"[red]Corpus directory not found:[/] {root}");
+        return;
+    }
+
+    string foundryEndpoint = config["Foundry:Endpoint"]
+        ?? throw new InvalidOperationException("Set Foundry:Endpoint in appsettings.json.");
+    string embeddingDeployment = config["Foundry:EmbeddingDeployment"]
+        ?? throw new InvalidOperationException("Set Foundry:EmbeddingDeployment in appsettings.json.");
+    string searchEndpoint = config["Search:Endpoint"]
+        ?? throw new InvalidOperationException("Set Search:Endpoint in appsettings.json.");
+    string indexName = config["Search:IndexName"]
+        ?? throw new InvalidOperationException("Set Search:IndexName in appsettings.json.");
+
+    AnsiConsole.MarkupLine($"[grey]Search endpoint :[/] {searchEndpoint}");
+    AnsiConsole.MarkupLine($"[grey]Index           :[/] {indexName}");
+
+    // Same keyless credential as `model` — no API keys for Foundry or Azure AI Search.
+    var credential = new DefaultAzureCredential();
+    var openAiClient = new AzureOpenAIClient(new Uri(foundryEndpoint), credential);
+    EmbeddingClient embeddingClient = openAiClient.GetEmbeddingClient(embeddingDeployment);
+
+    var indexClient = new SearchIndexClient(new Uri(searchEndpoint), credential);
+    SearchClient searchClient = indexClient.GetSearchClient(indexName);
+
+    (string[] articles, string[] statFiles) = ScanCorpus(root);
+
+    var articleChunker = new ArticleChunker();
+    var statsChunker = new StatsChunker();
+
+    var chunks = new List<Chunk>();
+    foreach (string articlePath in articles)
+    {
+        chunks.AddRange(articleChunker.ChunkMarkdown(articlePath, $"articles/{Path.GetFileName(articlePath)}"));
+    }
+    foreach (string statPath in statFiles)
+    {
+        chunks.AddRange(statsChunker.ChunkCsv(statPath, $"stats/{Path.GetFileName(statPath)}"));
+    }
+
+    var searchIndexer = new SearchIndexer();
+    await searchIndexer.EnsureIndexAsync(indexClient, indexName);
+    int uploaded = await searchIndexer.EmbedAndUploadAsync(searchClient, embeddingClient, chunks);
+
+    int articleChunks = chunks.Count(c => c.SourceType == "article");
+    int statChunks = chunks.Count(c => c.SourceType == "stat");
+
+    var table = new Table().Border(TableBorder.Rounded);
+    table.AddColumn("Source");
+    table.AddColumn(new TableColumn("Files").RightAligned());
+    table.AddColumn(new TableColumn("Chunks").RightAligned());
+    table.AddRow("Articles (.md)", articles.Length.ToString(), articleChunks.ToString());
+    table.AddRow("Player stats (.csv)", statFiles.Length.ToString(), statChunks.ToString());
+    AnsiConsole.Write(table);
+
+    AnsiConsole.MarkupLine($"[green]✓ Embedded + indexed {uploaded} chunks into '{indexName}'.[/]");
 }

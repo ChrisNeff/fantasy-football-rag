@@ -48,9 +48,11 @@ docs/                # design + chunking decisions
 ### With `just` (shortcut)
 
 ```bash
-just provision   # stand up Foundry + model deployments
-just model       # keyless model call (W1 done-bar #2)
-just load        # parse the sample corpus (W1 done-bar #3)
+just provision         # stand up Foundry + model deployments
+just provision-search  # stand up Azure AI Search (Free tier, roles-only auth)
+just model             # keyless model call (W1 done-bar #2)
+just load              # parse the sample corpus (W1 done-bar #3)
+just ingest            # chunk + embed + index the sample corpus (W2)
 ```
 
 Run `just` with no args to list all recipes. Or do it the long way:
@@ -59,24 +61,31 @@ Run `just` with no args to list all recipes. Or do it the long way:
 # 1. Provision Foundry (resource + gpt-5-mini + text-embedding-3-small, GlobalStandard)
 ./scripts/provision-foundry.sh
 
-# 2. Confirm src/appsettings.json points at your resource endpoint + deployment
-#    (endpoint + deployment name are NOT secrets — safe to commit, since auth is keyless)
+# 2. Provision Azure AI Search (Free tier, roles-only auth)
+./scripts/provision-search.sh
 
-# 3. Verify the keyless model call works (W1 done-bar #2)
+# 3. Confirm src/appsettings.json points at your resource endpoints + deployment/index names
+#    (endpoint + deployment/index names are NOT secrets — safe to commit, since auth is keyless)
+
+# 4. Verify the keyless model call works (W1 done-bar #2)
 dotnet run --project src -- model
 
-# 4. Load + parse the corpus (W1 done-bar #3)
+# 5. Load + parse the corpus (W1 done-bar #3)
 dotnet run --project src -- load
+
+# 6. Chunk + embed + index the corpus into Azure AI Search (W2)
+dotnet run --project src -- ingest
 ```
 
-Config lives in **`src/appsettings.json`** (committed — endpoint + deployment only). Environment
-variables (`Foundry__Endpoint`, `Foundry__ChatDeployment`) override it for CI/containers. There are
-**no API keys** — `DefaultAzureCredential` uses your `az login` session locally and managed identity
-in Azure.
+Config lives in **`src/appsettings.json`** (committed — endpoints + deployment/index names only).
+Environment variables (`Foundry__Endpoint`, `Foundry__ChatDeployment`, `Search__Endpoint`,
+`Search__IndexName`) override it for CI/containers. There are **no API keys** —
+`DefaultAzureCredential` uses your `az login` session locally and managed identity in Azure.
 
 ## Debugging (Zed)
 
-`.zed/debug.json` defines two launch configs — **Debug: model** and **Debug: load**. Set
+`.zed/debug.json` defines three launch configs — **Debug: model**, **Debug: load**, and
+**Debug: ingest**. Set
 breakpoints in `src/Program.cs`, open the debug panel, pick a config, and run. Each builds
 Debug first via `just build-debug`.
 
@@ -87,7 +96,7 @@ and put it on your `PATH`.
 ## Roadmap
 
 - [x] **W1** Environment + scaffold — Foundry provisioned, keyless model call, corpus parses
-- [ ] **W2** Ingestion — summarize stats + header-chunk articles, embed, index to Azure AI Search
+- [x] **W2** Ingestion — summarize stats + header-chunk articles, embed, index to Azure AI Search
 - [ ] **W3** Hybrid retrieval — Top-3 relevant chunks from console
 - [ ] **W4** Chat interface — grounded answers end-to-end
 - [ ] **W5** Evaluation — 20-question test set, recall + accuracy

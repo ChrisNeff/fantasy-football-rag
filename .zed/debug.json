@@ -14,5 +14,13 @@
     "program": "$ZED_WORKTREE_ROOT/src/bin/Debug/net8.0/FantasyFootballRag.dll",
     "args": ["model"],
     "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "Debug: ingest",
+    "adapter": "netcoredbg",
+    "request": "launch",
+    "program": "$ZED_WORKTREE_ROOT/src/bin/Debug/net8.0/FantasyFootballRag.dll",
+    "args": ["ingest"],
+    "cwd": "$ZED_WORKTREE_ROOT"
   }
 ]
