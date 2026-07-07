@@ -4,6 +4,10 @@ A RAG system over a season of **NFL / fantasy football** data — player game lo
 news/analysis articles. Ask natural-language questions ("How did Justin Jefferson perform
 down the stretch in 2025?") and get accurate, grounded answers from the corpus.
 
+See [`docs/goals.md`](docs/goals.md) for the full goal, success criteria, milestones, and
+evaluation approach, and [`docs/use-cases.md`](docs/use-cases.md) for what the system needs
+to do.
+
 ## Stack
 
 - **Platform:** Microsoft Foundry — keyless auth via `DefaultAzureCredential` (no API keys)
@@ -27,6 +31,9 @@ Stats (CSV) + Articles (Markdown)
    Query ──► hybrid retrieve Top-K ──► grounded prompt ──► gpt-5-mini ──► Answer   (W3–W4)
 ```
 
+Full architecture (decisions + rationale, code structure, config, auth, data-folder split) is
+in [`docs/architecture.md`](docs/architecture.md).
+
 ## Project Structure
 
 ```
@@ -37,7 +44,13 @@ scripts/
 data/
   sample-corpus/     # tiny committed sample (articles/ + stats/) so `load` runs out of the box
   corpus/            # full season snapshot — NOT committed (see .gitignore)
-docs/                # design + chunking decisions
+docs/
+  goals.md           # why this project exists, success criteria, milestones, evaluation
+  use-cases.md       # what the system needs to do
+  architecture.md    # decisions + rationale, code structure, config, auth
+  chunking-decisions.md
+  data-sources.md
+  w2-ingestion-plan.md
 ```
 
 ## Getting Started
