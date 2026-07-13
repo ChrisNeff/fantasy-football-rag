@@ -10,7 +10,8 @@ set -euo pipefail
 
 # --- config ---
 RG=ff-rag-rg
-LOC=eastus2
+LOC=eastus2                   # RG + Foundry live here; don't change (RG location is immutable)
+SEARCH_LOC=eastus             # Search service region — free tier had no capacity in eastus2
 SEARCH_NAME=ff-search-cneff   # globally-unique service name; bump if create conflicts
 SKU=free                      # $0, supports vector fields; one-way door to a paid tier (recreate to upgrade)
 
@@ -22,7 +23,7 @@ if az search service show --name "$SEARCH_NAME" --resource-group "$RG" --output 
   echo "    already exists, skipping"
 else
   az search service create \
-    --name "$SEARCH_NAME" --resource-group "$RG" --location "$LOC" \
+    --name "$SEARCH_NAME" --resource-group "$RG"  --location "$SEARCH_LOC" \
     --sku "$SKU" --disable-local-auth true --output none
 fi
 
