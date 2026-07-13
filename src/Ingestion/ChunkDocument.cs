@@ -15,7 +15,7 @@ public class ChunkDocument
 
     // 1536 = text-embedding-3-small's published embedding dimension.
     [VectorSearchField(VectorSearchDimensions = 1536, VectorSearchProfileName = "chunk-vector-profile")]
-    public ReadOnlyMemory<float> ContentVector { get; set; }
+    public IReadOnlyList<float> ContentVector { get; set; } = Array.Empty<float>();
 
     [SimpleField(IsFilterable = true, IsFacetable = true)]
     public string SourceType { get; set; } = ""; // "stat" | "article"

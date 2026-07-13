@@ -49,7 +49,7 @@ public class SearchIndexer
                 {
                     Id = chunk.Id,
                     Content = chunk.Content,
-                    ContentVector = embeddings[i].ToFloats(),
+                    ContentVector = embeddings[i].ToFloats().ToArray(),
                     SourceType = chunk.SourceType,
                     SourceFile = chunk.SourceFile,
                     Player = chunk.Player,
