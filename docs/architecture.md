@@ -1,5 +1,18 @@
 # Architecture
 
+## Service Roles
+
+Two Azure services, strict division of labor — neither can do the other's job:
+
+| | Microsoft Foundry | Azure AI Search |
+|---|---|---|
+| **Job** | Models: turn text into vectors or answers | Memory + ranking: store chunks, retrieve by relevance |
+| **Used at ingest** | `text-embedding-3-small` embeds every chunk | Stores chunk documents (text + 1536-dim vector + metadata) |
+| **Used at query** | Embeds the question (same deployment — vectors must share geometry); `gpt-5-mini` writes the grounded answer (W4) | BM25 keyword + HNSW vector + RRF fusion → Top-K chunks; exact filters over typed fields |
+| **Never does** | Ranking, storage, filtering | Understanding or generating text |
+
+The LLM has no access to the corpus and can't rank it; Search can't read a sentence. RAG is the seam between them.
+
 ## Data Flow
 
 ```
@@ -75,6 +88,17 @@ sequenceDiagram
 | LLM | `gpt-5-mini` (GlobalStandard) | `gpt-4o`/`4.1-mini` are deprecated in `eastus2` — verified Wk1 |
 | UI | Console (MVP) | Fastest path to a working system |
 | Phase 3 target | Microsoft Agent Framework (`Microsoft.Agents.AI`) | Semantic Kernel's successor — not the legacy SK `Kernel` API |
+| Entity extraction | None — typed fields are hand-promoted, not ML-extracted | See "Typed Entities" below; revisit only if W5 eval shows filtered article retrieval failing |
+
+## Typed Entities (deliberately absent)
+
+Stat chunks carry typed fields (`Player`, `Team`, `Week`); article chunks carry `Player: null`. This is by design, not omission:
+
+- **We use the push model.** Azure AI Search's entity recognition ("AI enrichment" skillsets — People/Orgs/Locations tags) only runs in the *pull* model, where an Azure indexer crawls a data source. Our pipeline pushes documents itself, so no skillset ever executes. Owning the chunking strategy is the point; enrichment also costs extra and fights the Free tier.
+- **Stat fields are promoted deterministically.** `StatsChunker` reads `Player`/`Team`/`Week` straight from CSV columns — structured-source typing beats any entity recognizer.
+- **Article chunks don't need entity tags to be findable.** Names live in the chunk *text*, and the keyword leg of hybrid search matches them (verified: a "Justin Jefferson" query surfaces the WR-roundup chunk despite `Player: null`).
+
+**When to revisit:** if the W5 eval shows article retrieval underperforming on *filtered* queries (e.g., `Week eq 14 and SourceType eq 'article'`), add an entity-tagging pass at ingest (LLM extraction or roster-based matching) — an eval-driven upgrade, not a default. The fully entity-shaped version of this data is Phase 2 (Databricks schema) and Phase 3 (agent tools over structured entities).
 
 ## Code Structure
 
