@@ -1,7 +1,9 @@
+using System.Globalization;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Indexes;
+using Azure.Search.Documents.Models;
 using FantasyFootballRag.Ingestion;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Chat;
@@ -25,7 +27,7 @@ IConfiguration config = new ConfigurationBuilder()
 
 string command = args.FirstOrDefault() ?? "help";
 
-switch (command)
+switch (command.ToLowerInvariant())
 {
     case "model":
         await RunModelCheck();
@@ -36,12 +38,105 @@ switch (command)
     case "ingest":
         await RunIngest(args.Skip(1).FirstOrDefault() ?? "data/sample-corpus");
         break;
+    case "query":
+        await RunQuery(
+            args.Skip(1).FirstOrDefault() ?? throw new InvalidOperationException("Provide a question."),
+            mode: args.Skip(2).FirstOrDefault() ?? "hybrid",      // keyword | vector | hybrid
+            filter: args.Skip(3).FirstOrDefault());               // e.g. "Week eq 14"
+        break;
     default:
         AnsiConsole.MarkupLine("[yellow]Usage:[/] dotnet run --project src -- <command>");
         AnsiConsole.MarkupLine("  [green]model[/]        verify the Foundry model call (keyless auth)");
         AnsiConsole.MarkupLine("  [green]load [path][/]  load + parse the FF corpus, print counts");
         AnsiConsole.MarkupLine("  [green]ingest [path][/] chunk + embed + index the corpus into Azure AI Search");
         break;
+}
+
+// --- W3 Query ran
+async Task RunQuery(string question, string mode, string? filter)
+{
+    string foundryEndpoint = config["Foundry:Endpoint"]
+        ?? throw new InvalidOperationException("Set Foundry:Endpoint in appsettings.json.");
+    string embeddingDeployment = config["Foundry:EmbeddingDeployment"]
+        ?? throw new InvalidOperationException("Set Foundry:EmbeddingDeployment in appsettings.json.");
+    string searchEndpoint = config["Search:Endpoint"]
+        ?? throw new InvalidOperationException("Set Search:Endpoint in appsettings.json.");
+    string indexName = config["Search:IndexName"]
+        ?? throw new InvalidOperationException("Set Search:IndexName in appsettings.json.");
+
+    // AnsiConsole.MarkupLine($"[grey]Search endpoint :[/] {searchEndpoint}");
+    // AnsiConsole.MarkupLine($"[grey]Index           :[/] {indexName}");
+
+    // Same keyless credential as `model` — no API keys for Foundry or Azure AI Search.
+    var credential = new DefaultAzureCredential();
+    var openAiClient = new AzureOpenAIClient(new Uri(foundryEndpoint), credential);
+    EmbeddingClient embeddingClient = openAiClient.GetEmbeddingClient(embeddingDeployment);
+
+    var indexClient = new SearchIndexClient(new Uri(searchEndpoint), credential);
+    SearchClient searchClient = indexClient.GetSearchClient(indexName);
+
+    OpenAIEmbedding embedding = await embeddingClient.GenerateEmbeddingAsync(question);
+    var queryVector = embedding.ToFloats();
+
+    var options = new SearchOptions { Size = 3, Filter = filter, IncludeTotalCount = true };
+    options.Select.Add("Id");
+    options.Select.Add("Content");
+    options.Select.Add("SourceType");
+    options.Select.Add("Player");
+    options.Select.Add("Week");
+    options.Select.Add("Team");
+    options.Select.Add("Section");
+
+    string? searchText = null;
+
+    if (mode is "vector" or "hybrid")
+    {
+        options.VectorSearch = new()
+        {
+            Queries = { new VectorizedQuery(queryVector)
+             {
+                 KNearestNeighborsCount = 10,          // candidates the vector leg feeds into fusion
+                 Fields = { "ContentVector" },
+             } }
+        };
+    }
+    if (mode is "keyword" or "hybrid")
+    {
+        searchText = question;
+    }
+
+    SearchResults<ChunkDocument> searchResults =
+          await searchClient.SearchAsync<ChunkDocument>(searchText, options);
+
+    AnsiConsole.MarkupLine($"[grey]Total results:[/] {searchResults.TotalCount}");
+
+    if (searchResults.TotalCount is null or < 1)
+    {
+        AnsiConsole.MarkupLine("  [red]No player information results found[/]");
+    }
+    else
+    {
+        var table = new Table().Border(TableBorder.Rounded);
+        table.AddColumn("[grey]Player[/]");
+        table.AddColumn("[grey]Team[/]");
+        table.AddColumn("[grey]Rank[/]");
+        table.AddColumn(new TableColumn("[grey]SearchScore[/]").RightAligned());
+        table.AddColumn("[grey]Content[/]");
+
+        var rank = 0;
+        await foreach (SearchResult<ChunkDocument> result in searchResults.GetResultsAsync())
+        {
+            table.AddRow(
+                result.Document.Player ?? string.Empty,
+                result.Document.Team ?? string.Empty,
+                (++rank).ToString(),
+                result.Score?.ToString("F4") ?? string.Empty,
+                result.Document.Content ?? string.Empty
+            );
+        }
+
+        AnsiConsole.Write(table);
+    }
 }
 
 // --- W1 done-bar #2: a model answer prints, via the Foundry endpoint, no API keys ---
