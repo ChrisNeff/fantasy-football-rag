@@ -33,6 +33,10 @@ ingest path="data/sample-corpus":
 query question mode="hybrid" filter="":
     dotnet run --project src -- query "{{question}}" {{mode}} "{{filter}}"
 
+# start the grounded RAG chat loop
+chat:
+    dotnet run --project src -- chat
+
 # build with debug symbols (Debug config) — what the editor debugger launches
 build-debug:
     dotnet build -c Debug
