@@ -46,3 +46,13 @@ day to day.
   keys/secrets for Foundry or Azure AI Search.
 - Read `docs/chunking-decisions.md` before touching anything under `src/Ingestion/`.
 - Never commit `data/corpus/` (full season snapshot) — only `data/sample-corpus/` is tracked.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (github.com/ChrisNeff/fantasy-football-rag), via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context — `CONTEXT.md` + `docs/adr/` at the repo root (created lazily as decisions get made). See `docs/agents/domain.md`.
