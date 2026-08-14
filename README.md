@@ -130,7 +130,7 @@ and put it on your `PATH`.
 - [x] **W2** Ingestion — summarize stats + header-chunk articles, embed, index to Azure AI Search
 - [x] **W3** Hybrid retrieval — Top-3 relevant chunks from console
 - [x] **W4** Chat interface — grounded answers end-to-end with citations
-- [ ] **W5** Evaluation — 20-question test set, recall + accuracy
+- [x] **W5** Evaluation — 20-question test set, recall + accuracy (recall 70%, accuracy 75% — see `docs/w5-eval-results.md`)
 - [ ] **W6** Polish — diagram, blog post, public repo
 
 ## Notes

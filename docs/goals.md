@@ -31,7 +31,7 @@ The MVP is done when **all three** are met:
 | 2 | ~Jul 3 | Ingestion + embedding | Stats summarized + articles header-chunked, embedded, indexed to Azure AI Search | ✅ Done |
 | 3 | ~Jul 17 | Hybrid retrieval | Query returns Top-3 relevant chunks from console; hybrid (keyword + vector) search working | ⏳ Next |
 | 4 | ~Jul 31 | SK chat interface | SK pipeline wired end-to-end; grounded answer from retrieved chunks; conversational console loop | Not started |
-| 5 | ~Aug 14 | Evaluation + iteration | 20-question test set scored; recall/accuracy measured; chunking or embedding adjusted if below target | Not started |
+| 5 | ~Aug 14 | Evaluation + iteration | 20-question test set scored; recall/accuracy measured; chunking or embedding adjusted if below target | ✅ Done — see `docs/w5-eval-results.md` (recall 70%, accuracy 75%; comparison-question retrieval flagged as open gap) |
 | 6 | ~Aug 21 | Polish + docs | Architecture diagram, blog post draft, README, repo public | Not started |
 
 Dates are spaced ~1–2 weeks apart for one build session/week. Re-verify against `README.md`'s

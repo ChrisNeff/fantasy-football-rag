@@ -67,7 +67,9 @@ public class IngestCommand
         }
         foreach (string statPath in statFiles)
         {
-            chunks.AddRange(statsChunker.ChunkCsv(statPath, $"stats/{Path.GetFileName(statPath)}"));
+            string relativePath = $"stats/{Path.GetFileName(statPath)}";
+            chunks.AddRange(statsChunker.ChunkCsv(statPath, relativePath));
+            chunks.AddRange(statsChunker.ChunkSeasonRollups(statPath, relativePath));
         }
 
         var searchIndexer = new SearchIndexer();
@@ -76,13 +78,15 @@ public class IngestCommand
 
         int articleChunks = chunks.Count(c => c.SourceType == "article");
         int statChunks = chunks.Count(c => c.SourceType == "stat");
+        int statSeasonChunks = chunks.Count(c => c.SourceType == "stat-season");
 
         var table = new Table().Border(TableBorder.Rounded);
         table.AddColumn("Source");
         table.AddColumn(new TableColumn("Files").RightAligned());
         table.AddColumn(new TableColumn("Chunks").RightAligned());
         table.AddRow("Articles (.md)", articles.Length.ToString(), articleChunks.ToString());
-        table.AddRow("Player stats (.csv)", statFiles.Length.ToString(), statChunks.ToString());
+        table.AddRow("Player stats — weekly (.csv)", statFiles.Length.ToString(), statChunks.ToString());
+        table.AddRow("Player stats — season rollup (.csv)", statFiles.Length.ToString(), statSeasonChunks.ToString());
         AnsiConsole.Write(table);
 
         AnsiConsole.MarkupLine($"[green]✓ Embedded + indexed {uploaded} chunks into '{indexName}'.[/]");

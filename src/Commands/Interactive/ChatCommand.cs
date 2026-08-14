@@ -58,7 +58,20 @@ public class ChatCommand
 
         while (true)
         {
-            string? question = AnsiConsole.Ask<string>("[blue]You:[/]");
+            // AnsiConsole.Ask throws on redirected stdin, which blocks piping questions in for
+            // batch eval runs (e.g. W5 scoring sweeps) — fall back to a plain read in that case.
+            string? question;
+            if (Console.IsInputRedirected)
+            {
+                AnsiConsole.Markup("[blue]You:[/] ");
+                question = Console.ReadLine();
+                AnsiConsole.WriteLine(question ?? "");
+            }
+            else
+            {
+                question = AnsiConsole.Ask<string>("[blue]You:[/]");
+            }
+
             if (string.IsNullOrWhiteSpace(question) || question.Trim().ToLower() == "exit") break;
 
             // 4. Retrieve fresh chunks for this question (hybrid search)
