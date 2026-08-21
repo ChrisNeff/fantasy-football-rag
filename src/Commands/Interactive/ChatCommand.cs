@@ -1,8 +1,10 @@
+using Azure;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Azure.Search.Documents.Indexes;
 using FantasyFootballRag.Retrieval;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.SemanticKernel.ChatCompletion;
 using OpenAI.Chat;
 using OpenAI.Embeddings;
@@ -12,19 +14,21 @@ namespace FantasyFootballRag.Commands.Interactive;
 
 /// <summary>
 /// Interactive RAG chat loop with grounded answers and citations.
+/// Session Q&A is written to logs/session-{timestamp}.log for eval traceability.
 /// </summary>
 public class ChatCommand
 {
     private readonly IConfiguration _config;
+    private readonly ILogger<ChatCommand> _logger;
 
-    public ChatCommand(IConfiguration config)
+    public ChatCommand(IConfiguration config, ILoggerFactory loggerFactory)
     {
         _config = config;
+        _logger = loggerFactory.CreateLogger<ChatCommand>();
     }
 
     public async Task ExecuteAsync()
     {
-        // 1. Build the kernel with gpt-5-mini via Foundry (keyless)
         string foundryEndpoint = _config["Foundry:Endpoint"]
             ?? throw new InvalidOperationException("Set Foundry:Endpoint in appsettings.json.");
         string chatDeployment = _config["Foundry:ChatDeployment"]
@@ -37,56 +41,72 @@ public class ChatCommand
             ?? throw new InvalidOperationException("Set Search:IndexName in appsettings.json.");
 
         var credential = new DefaultAzureCredential();
-
-        // Build kernel and get chat client directly from AzureOpenAIClient
         var openAiClient = new AzureOpenAIClient(new Uri(foundryEndpoint), credential);
         var chatClient = openAiClient.GetChatClient(chatDeployment);
-        
-        // Initialize chat history with the system prompt
-        var history = new ChatHistory();
-        history.AddSystemMessage(ContextFormatter.SystemPrompt);
-
-        // 3. Set up embedding + search clients (same as query command)
         var embeddingClient = openAiClient.GetEmbeddingClient(embeddingDeployment);
         var indexClient = new SearchIndexClient(new Uri(searchEndpoint), credential);
         var searchClient = indexClient.GetSearchClient(indexName);
+        var retriever = new HybridRetriever(searchClient, embeddingClient, _logger);
 
-        var retriever = new HybridRetriever(searchClient, embeddingClient);
+        var history = new ChatHistory();
+        history.AddSystemMessage(ContextFormatter.SystemPrompt);
+
+        // Session log — written regardless of interactive vs. batch mode, useful for eval sweeps
+        string logDir = Path.Combine(AppContext.BaseDirectory, "logs");
+        Directory.CreateDirectory(logDir);
+        string logPath = Path.Combine(logDir, $"session-{DateTime.Now:yyyyMMdd-HHmmss}.log");
+        await using var sessionLog = new StreamWriter(logPath, append: false) { AutoFlush = true };
+        await sessionLog.WriteLineAsync($"# FF RAG Session — {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        await sessionLog.WriteLineAsync($"# Model: {chatDeployment}  Index: {indexName}");
+        await sessionLog.WriteLineAsync();
+
+        _logger.LogInformation("Session log: {LogPath}", logPath);
 
         AnsiConsole.MarkupLine("[green]Fantasy Football RAG — Chat[/]  (type [grey]exit[/] to quit)");
+        AnsiConsole.MarkupLine($"[grey]Session log:[/] {logPath}");
         AnsiConsole.WriteLine();
 
         while (true)
         {
-            // AnsiConsole.Ask throws on redirected stdin, which blocks piping questions in for
-            // batch eval runs (e.g. W5 scoring sweeps) — fall back to a plain read in that case.
+            // AnsiConsole.Ask throws on redirected stdin — fall back to plain read for batch eval runs
             string? question;
             if (Console.IsInputRedirected)
             {
                 AnsiConsole.Markup("[blue]You:[/] ");
                 question = Console.ReadLine();
-                AnsiConsole.WriteLine(question ?? "");
+                if (question != null) AnsiConsole.WriteLine(question);
             }
             else
             {
                 question = AnsiConsole.Ask<string>("[blue]You:[/]");
             }
 
-            if (string.IsNullOrWhiteSpace(question) || question.Trim().ToLower() == "exit") break;
+            if (string.IsNullOrWhiteSpace(question) || question.Trim().Equals("exit", StringComparison.OrdinalIgnoreCase))
+                break;
 
-            // 4. Retrieve fresh chunks for this question (hybrid search)
-            var chunks = await retriever.RetrieveAsync(question, mode: "hybrid", topK: 3);
+            await sessionLog.WriteLineAsync($"Q: {question}");
 
-            // 5. Format and add the user turn (question + context)
+            // Retrieve fresh chunks for this question
+            List<ChunkResult> chunks;
+            try
+            {
+                chunks = await retriever.RetrieveAsync(question, mode: "hybrid", topK: 3);
+            }
+            catch (RequestFailedException ex)
+            {
+                _logger.LogError(ex, "Retrieval failed for question: {Question}", question);
+                AnsiConsole.MarkupLine($"[red]✗ Retrieval error (HTTP {ex.Status}):[/] {ex.Message}");
+                await sessionLog.WriteLineAsync($"A: [RETRIEVAL ERROR: {ex.Status} — {ex.Message}]");
+                continue;
+            }
+
             string userMessage = ContextFormatter.FormatUserMessage(question, chunks);
-            
-            // 6. Get the grounded answer using OpenAI ChatClient directly
+
+            // Build message list for this turn
             var messages = new List<OpenAI.Chat.ChatMessage>
             {
                 new OpenAI.Chat.SystemChatMessage(ContextFormatter.SystemPrompt)
             };
-            
-            // Add conversation history
             foreach (var msg in history)
             {
                 if (msg.Role == AuthorRole.User)
@@ -94,19 +114,33 @@ public class ChatCommand
                 else if (msg.Role == AuthorRole.Assistant && !string.IsNullOrEmpty(msg.Content))
                     messages.Add(new OpenAI.Chat.AssistantChatMessage(msg.Content));
             }
-            
-            // Add current user message
             messages.Add(new OpenAI.Chat.UserChatMessage(userMessage));
-            
-            var completion = await chatClient.CompleteChatAsync(messages);
-            string response = completion.Value.Content[0].Text;
-            
-            // Update history
+
+            string response;
+            try
+            {
+                var completion = await chatClient.CompleteChatAsync(messages);
+                response = completion.Value.Content[0].Text;
+            }
+            catch (RequestFailedException ex)
+            {
+                _logger.LogError(ex, "Chat completion failed");
+                AnsiConsole.MarkupLine($"[red]✗ Model error (HTTP {ex.Status}):[/] {ex.Message}");
+                await sessionLog.WriteLineAsync($"A: [MODEL ERROR: {ex.Status} — {ex.Message}]");
+                continue;
+            }
+
             history.AddUserMessage(userMessage);
             history.AddAssistantMessage(response);
 
             AnsiConsole.MarkupLine($"[green]Assistant:[/] {response}");
             AnsiConsole.WriteLine();
+
+            await sessionLog.WriteLineAsync($"A: {response}");
+            await sessionLog.WriteLineAsync();
         }
+
+        await sessionLog.WriteLineAsync($"# Session ended {DateTime.Now:HH:mm:ss} — {history.Count / 2} turns");
+        AnsiConsole.MarkupLine($"[grey]Session saved:[/] {logPath}");
     }
 }

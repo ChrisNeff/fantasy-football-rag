@@ -1,10 +1,11 @@
+using Azure;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Indexes;
 using FantasyFootballRag.Ingestion;
 using Microsoft.Extensions.Configuration;
-using OpenAI.Embeddings;
+using Microsoft.Extensions.Logging;
 using Spectre.Console;
 
 namespace FantasyFootballRag.Commands.Ingestion;
@@ -15,10 +16,12 @@ namespace FantasyFootballRag.Commands.Ingestion;
 public class IngestCommand
 {
     private readonly IConfiguration _config;
+    private readonly ILogger<IngestCommand> _logger;
 
-    public IngestCommand(IConfiguration config)
+    public IngestCommand(IConfiguration config, ILoggerFactory loggerFactory)
     {
         _config = config;
+        _logger = loggerFactory.CreateLogger<IngestCommand>();
     }
 
     /// <summary>
@@ -31,7 +34,8 @@ public class IngestCommand
 
         if (!Directory.Exists(root))
         {
-            AnsiConsole.MarkupLine($"[red]Corpus directory not found:[/] {root}");
+            AnsiConsole.MarkupLine($"[red]✗ Corpus directory not found:[/] {root}");
+            AnsiConsole.MarkupLine($"[yellow]Hint:[/] Run from the repo root, or pass the path explicitly: [grey]just ingest data/corpus[/]");
             return;
         }
 
@@ -47,24 +51,21 @@ public class IngestCommand
         AnsiConsole.MarkupLine($"[grey]Search endpoint :[/] {searchEndpoint}");
         AnsiConsole.MarkupLine($"[grey]Index           :[/] {indexName}");
 
-        // Same keyless credential as `model` — no API keys for Foundry or Azure AI Search.
         var credential = new DefaultAzureCredential();
         var openAiClient = new AzureOpenAIClient(new Uri(foundryEndpoint), credential);
-        EmbeddingClient embeddingClient = openAiClient.GetEmbeddingClient(embeddingDeployment);
-
+        var embeddingClient = openAiClient.GetEmbeddingClient(embeddingDeployment);
         var indexClient = new SearchIndexClient(new Uri(searchEndpoint), credential);
-        SearchClient searchClient = indexClient.GetSearchClient(indexName);
+        var searchClient = indexClient.GetSearchClient(indexName);
 
+        // ── Chunk ──────────────────────────────────────────────────────────────
         (string[] articles, string[] statFiles) = ScanCorpus(root);
 
         var articleChunker = new ArticleChunker();
         var statsChunker = new StatsChunker();
-
         var chunks = new List<Chunk>();
+
         foreach (string articlePath in articles)
-        {
             chunks.AddRange(articleChunker.ChunkMarkdown(articlePath, $"articles/{Path.GetFileName(articlePath)}"));
-        }
         foreach (string statPath in statFiles)
         {
             string relativePath = $"stats/{Path.GetFileName(statPath)}";
@@ -72,10 +73,48 @@ public class IngestCommand
             chunks.AddRange(statsChunker.ChunkSeasonRollups(statPath, relativePath));
         }
 
+        // ── Ensure index ───────────────────────────────────────────────────────
         var searchIndexer = new SearchIndexer();
-        await searchIndexer.EnsureIndexAsync(indexClient, indexName);
-        int uploaded = await searchIndexer.EmbedAndUploadAsync(searchClient, embeddingClient, chunks);
+        try
+        {
+            await searchIndexer.EnsureIndexAsync(indexClient, indexName);
+        }
+        catch (RequestFailedException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]✗ Index setup failed (HTTP {ex.Status}):[/] {ex.Message}");
+            return;
+        }
 
+        // ── Embed + upload (with progress) ────────────────────────────────────
+        int uploaded = 0;
+        try
+        {
+            await AnsiConsole.Progress()
+                .AutoClear(false)
+                .Columns(new ProgressColumn[]
+                {
+                    new TaskDescriptionColumn(),
+                    new ProgressBarColumn(),
+                    new PercentageColumn(),
+                    new SpinnerColumn(),
+                })
+                .StartAsync(async ctx =>
+                {
+                    var task = ctx.AddTask("[green]Embedding + indexing chunks[/]", maxValue: chunks.Count);
+                    uploaded = await searchIndexer.EmbedAndUploadAsync(
+                        searchClient, embeddingClient, chunks,
+                        onBatchComplete: count => task.Increment(count));
+                });
+        }
+        catch (RequestFailedException ex)
+        {
+            _logger.LogError(ex, "Embed/upload failed after {Uploaded} chunks", uploaded);
+            AnsiConsole.MarkupLine($"[red]✗ Ingest failed (HTTP {ex.Status}):[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[yellow]Note:[/] {uploaded} chunks may have been indexed before the failure. Re-running ingest is safe — upsert-by-id is idempotent.");
+            return;
+        }
+
+        // ── Summary ────────────────────────────────────────────────────────────
         int articleChunks = chunks.Count(c => c.SourceType == "article");
         int statChunks = chunks.Count(c => c.SourceType == "stat");
         int statSeasonChunks = chunks.Count(c => c.SourceType == "stat-season");
@@ -92,11 +131,6 @@ public class IngestCommand
         AnsiConsole.MarkupLine($"[green]✓ Embedded + indexed {uploaded} chunks into '{indexName}'.[/]");
     }
 
-    /// <summary>
-    /// Scans the corpus directory for article and stat files.
-    /// </summary>
-    /// <param name="root">Root corpus directory path.</param>
-    /// <returns>Tuple of article paths and stat file paths.</returns>
     private (string[] Articles, string[] Stats) ScanCorpus(string root)
     {
         string articlesDir = Path.Combine(root, "articles");

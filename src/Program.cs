@@ -1,51 +1,114 @@
+using Azure;
 using FantasyFootballRag.Commands;
 using FantasyFootballRag.Commands.Ingestion;
 using FantasyFootballRag.Commands.Interactive;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Spectre.Console;
 
-// Fantasy Football RAG — minimal CLI router.
-// Config: appsettings.json is primary (safe to commit — endpoint + deployment are not
-// secrets now that auth is keyless). Environment variables override (handy for CI/containers).
+// ── Config ────────────────────────────────────────────────────────────────────
 IConfiguration config = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
     .AddJsonFile("appsettings.json", optional: false)
     .AddEnvironmentVariables()
     .Build();
 
-string command = args.FirstOrDefault() ?? "help";
+// ── Logger factory ────────────────────────────────────────────────────────────
+// Verbose flag: `dotnet run -- --verbose <command>` or any arg position containing "--verbose"
+bool verbose = args.Any(a => a.Equals("--verbose", StringComparison.OrdinalIgnoreCase));
+string[] effectiveArgs = args.Where(a => !a.Equals("--verbose", StringComparison.OrdinalIgnoreCase)).ToArray();
 
-switch (command.ToLowerInvariant())
+using ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
 {
-    case "model":
-        await new ModelCheckCommand(config).ExecuteAsync();
-        break;
+    builder
+        .SetMinimumLevel(verbose ? LogLevel.Debug : LogLevel.Warning)
+        .AddSimpleConsole(opts =>
+        {
+            opts.SingleLine = true;
+            opts.TimestampFormat = "HH:mm:ss ";
+        });
+});
 
-    case "load":
-        new LoadCommand(config).Execute(args.Skip(1).FirstOrDefault() ?? "data/sample-corpus");
-        break;
+// ── Dispatch ──────────────────────────────────────────────────────────────────
+string command = effectiveArgs.FirstOrDefault() ?? "help";
 
-    case "ingest":
-        await new IngestCommand(config).ExecuteAsync(args.Skip(1).FirstOrDefault() ?? "data/sample-corpus");
-        break;
+try
+{
+    switch (command.ToLowerInvariant())
+    {
+        case "model":
+            await new ModelCheckCommand(config, loggerFactory).ExecuteAsync();
+            break;
 
-    case "query":
-        await new QueryCommand(config).ExecuteAsync(
-            args.Skip(1).FirstOrDefault() ?? throw new InvalidOperationException("Provide a question."),
-            mode: args.Skip(2).FirstOrDefault() ?? "hybrid",      // keyword | vector | hybrid
-            filter: args.Skip(3).FirstOrDefault());               // e.g. "Week eq 14"
-        break;
+        case "load":
+            new LoadCommand(config).Execute(effectiveArgs.Skip(1).FirstOrDefault() ?? "data/sample-corpus");
+            break;
 
-    case "chat":
-        await new ChatCommand(config).ExecuteAsync();
-        break;
+        case "ingest":
+            await new IngestCommand(config, loggerFactory).ExecuteAsync(
+                effectiveArgs.Skip(1).FirstOrDefault() ?? "data/sample-corpus");
+            break;
 
-    default:
-        AnsiConsole.MarkupLine("[yellow]Usage:[/] dotnet run --project src -- <command>");
-        AnsiConsole.MarkupLine("  [green]model[/]               verify the Foundry model call (keyless auth)");
-        AnsiConsole.MarkupLine("  [green]load [path][/]         load + parse the FF corpus, print counts");
-        AnsiConsole.MarkupLine("  [green]ingest [path][/]       chunk + embed + index the corpus into Azure AI Search");
-        AnsiConsole.MarkupLine("  [green]query <q> [mode][/]    retrieve chunks for question (mode: keyword|vector|hybrid)");
-        AnsiConsole.MarkupLine("  [green]chat[/]                start the grounded RAG chat loop");
-        break;
+        case "query":
+            string question = effectiveArgs.Skip(1).FirstOrDefault()
+                ?? throw new ArgumentException("Provide a question: just query \"<question>\" [mode] [filter]");
+            await new QueryCommand(config, loggerFactory).ExecuteAsync(
+                question,
+                mode: effectiveArgs.Skip(2).FirstOrDefault() ?? "hybrid",
+                filter: effectiveArgs.Skip(3).FirstOrDefault());
+            break;
+
+        case "chat":
+            await new ChatCommand(config, loggerFactory).ExecuteAsync();
+            break;
+
+        default:
+            PrintUsage();
+            break;
+    }
+}
+catch (ArgumentException ex)
+{
+    AnsiConsole.MarkupLine($"[red]✗ Bad arguments:[/] {ex.Message}");
+    Environment.Exit(1);
+}
+catch (InvalidOperationException ex)
+{
+    // Config validation failures — these are always actionable for the user
+    AnsiConsole.MarkupLine($"[red]✗ Configuration error:[/] {ex.Message}");
+    if (verbose) AnsiConsole.WriteException(ex);
+    Environment.Exit(1);
+}
+catch (RequestFailedException ex)
+{
+    AnsiConsole.MarkupLine($"[red]✗ Azure request failed[/] (HTTP {ex.Status}): {ex.Message}");
+    AnsiConsole.MarkupLine(ex.Status switch
+    {
+        401 or 403 => "[yellow]Hint:[/] Run [grey]az login[/] and verify your RBAC role on the resource.",
+        404        => "[yellow]Hint:[/] Check endpoint URLs and index name in appsettings.json.",
+        429        => "[yellow]Hint:[/] Rate limit hit — wait a moment and retry.",
+        _          => "[yellow]Hint:[/] Run with [grey]--verbose[/] to see the full exception."
+    });
+    if (verbose) AnsiConsole.WriteException(ex);
+    Environment.Exit(1);
+}
+catch (Exception ex)
+{
+    AnsiConsole.MarkupLine($"[red]✗ Unexpected error:[/] {ex.Message}");
+    AnsiConsole.MarkupLine("[yellow]Hint:[/] Run with [grey]--verbose[/] to see the full stack trace.");
+    if (verbose) AnsiConsole.WriteException(ex);
+    Environment.Exit(1);
+}
+
+// ── Help ──────────────────────────────────────────────────────────────────────
+static void PrintUsage()
+{
+    AnsiConsole.MarkupLine("[yellow]Usage:[/] dotnet run --project src -- [grey][[--verbose]][/] <command>");
+    AnsiConsole.MarkupLine("  [green]model[/]                        verify Foundry model call (keyless auth smoke test)");
+    AnsiConsole.MarkupLine("  [green]load [path][/]                  parse corpus, print counts (no Azure calls)");
+    AnsiConsole.MarkupLine("  [green]ingest [path][/]                chunk + embed + index corpus into Azure AI Search");
+    AnsiConsole.MarkupLine("  [green]query <q> [mode] [filter][/]    retrieve chunks (mode: keyword|vector|hybrid)");
+    AnsiConsole.MarkupLine("  [green]chat[/]                         start grounded RAG chat loop");
+    AnsiConsole.WriteLine();
+    AnsiConsole.MarkupLine("  [grey]--verbose[/]  show full exception stack traces and debug logs");
 }
