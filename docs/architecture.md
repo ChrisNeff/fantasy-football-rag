@@ -68,7 +68,9 @@ sequenceDiagram
 | Chunk size | ~800 chars (500–1500 range) | See `docs/chunking-decisions.md` |
 | Overlap | 10–20% on prose only | Avoids mid-thought cuts; not needed on stat records |
 | Embedding | `text-embedding-3-small` (start) | Cost/perf default; upgrade to `3-large` only if recall falls short |
+| Ingestion embedding | App code owns embed + index (not integrated vectorization) | Full control while the W2 pipeline shape was still being worked out; integrated vectorization (embedding skill on the indexer) is a future simplification — also structurally closes the same-deployment-for-query-and-corpus risk by construction instead of by discipline |
 | Search | Hybrid (keyword + vector) | Keyword for exact names, vector for semantic intent |
+| Reranking | RRF fusion only, no semantic reranker | Free-tier Azure AI Search has no semantic ranker; RRF fuses the hybrid legs by rank. Standard tier adds a cross-encoder semantic reranker plus captions/answers — documented upgrade path, not yet needed at this corpus size |
 | Top-K | 3–5 chunks | Start at 3, expand to 5 if answers miss context |
 | Orchestration | Semantic Kernel + raw Azure AI Search SDK | SK for the chat pipeline, raw SDK for full hybrid-search control |
 | Platform | Microsoft Foundry, keyless (`DefaultAzureCredential`) | Unified deploys/grounding/evals; needs the Cognitive Services OpenAI User RBAC role |

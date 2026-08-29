@@ -110,10 +110,10 @@ and put it on your `PATH`.
 
 - [x] **W1** Environment + scaffold — Foundry provisioned, keyless model call, corpus parses
 - [x] **W2** Ingestion — summarize stats + header-chunk articles, embed, index to Azure AI Search
-- [ ] **W3** Hybrid retrieval — Top-3 relevant chunks from console
-- [ ] **W4** Chat interface — grounded answers end-to-end
-- [ ] **W5** Evaluation — 20-question test set, recall + accuracy
-- [ ] **W6** Polish — diagram, blog post, public repo
+- [x] **W3** Hybrid retrieval — Top-3 relevant chunks from console
+- [x] **W4** Chat interface — grounded answers end-to-end
+- [x] **W5** Evaluation — validation-question eval, accuracy 60% → 75% via targeted pre-aggregation (see Decisions)
+- [ ] **W6** Polish — architecture.md + README updated; diagram, blog post, and making the repo public are still open
 
 ## Notes
 
