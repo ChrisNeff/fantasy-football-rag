@@ -28,6 +28,15 @@ load path="data/sample-corpus":
 ingest path="data/sample-corpus":
     dotnet run --project src -- ingest {{path}}
 
+# query the RAG system with a question; pass mode and filter to override defaults:
+#    just query "Which receivers had big games in week 14?" vector
+query question mode="hybrid" filter="":
+    dotnet run --project src -- query "{{question}}" {{mode}} "{{filter}}"
+
+# start the grounded RAG chat loop
+chat:
+    dotnet run --project src -- chat
+
 # build with debug symbols (Debug config) — what the editor debugger launches
 build-debug:
     dotnet build -c Debug

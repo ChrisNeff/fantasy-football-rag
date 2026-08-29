@@ -13,6 +13,7 @@ to do.
 - **Platform:** Microsoft Foundry — keyless auth via `DefaultAzureCredential` (no API keys)
 - **Models:** `gpt-5-mini` (chat) + `text-embedding-3-small` (embeddings), deployed `GlobalStandard`
 - **SDK:** `Azure.AI.OpenAI` 2.x against the Foundry endpoint
+- **Orchestration:** Semantic Kernel — `ChatHistory` for conversation context
 - **Search:** Azure AI Search (hybrid: keyword + vector) — raw SDK for full hybrid-search control
 - **Chunking:** stats = one record per player-week; articles = structural on `##`/`###` headers
 - **Console UI:** [Spectre.Console](https://github.com/spectreconsole/spectre.console)
@@ -25,10 +26,12 @@ to do.
 ```
 Stats (CSV) + Articles (Markdown)
         │
-        ▼  [Ingestion]  chunk → embed → index        (W2)
+        ▼  [Ingestion]  chunk → embed → index                    (W2)
   Azure AI Search
         │
-   Query ──► hybrid retrieve Top-K ──► grounded prompt ──► gpt-5-mini ──► Answer   (W3–W4)
+   Query ──► hybrid retrieve Top-K                                (W3)
+        │
+   Chat  ──► retrieve → format SRC blocks → gpt-5-mini → answer  (W4)
 ```
 
 Full architecture (decisions + rationale, code structure, config, auth, data-folder split) is
@@ -37,9 +40,16 @@ in [`docs/architecture.md`](docs/architecture.md).
 ## Project Structure
 
 ```
-src/                 # C# console app (Azure.AI.OpenAI + Foundry)
+src/
+  Program.cs           # CLI router
+  Commands/
+    Ingestion/         # load, ingest commands
+    Interactive/       # model, query, chat commands
+  Retrieval/           # HybridRetriever, ContextFormatter, ChunkResult
+  Ingestion/           # ArticleChunker, StatsChunker, SearchIndexer
 scripts/
   provision-foundry.sh   # stand up the Foundry resource + model deployments
+  provision-search.sh    # stand up Azure AI Search (Free tier, roles-only auth)
   teardown-azure.sh      # delete the resource group when done
 data/
   sample-corpus/     # tiny committed sample (articles/ + stats/) so `load` runs out of the box
@@ -66,6 +76,8 @@ just provision-search  # stand up Azure AI Search (Free tier, roles-only auth)
 just model             # keyless model call (W1 done-bar #2)
 just load              # parse the sample corpus (W1 done-bar #3)
 just ingest            # chunk + embed + index the sample corpus (W2)
+just query "How did Jefferson perform in Week 14?"  # hybrid retrieval test (W3)
+just chat                                           # grounded RAG chat loop (W4)
 ```
 
 Run `just` with no args to list all recipes. Or do it the long way:
@@ -88,6 +100,12 @@ dotnet run --project src -- load
 
 # 6. Chunk + embed + index the corpus into Azure AI Search (W2)
 dotnet run --project src -- ingest
+
+# 7. Test hybrid retrieval (W3)
+dotnet run --project src -- query "Who had the most touchdowns?" hybrid
+
+# 8. Start the grounded RAG chat loop (W4)
+dotnet run --project src -- chat
 ```
 
 Config lives in **`src/appsettings.json`** (committed — endpoints + deployment/index names only).
@@ -111,8 +129,8 @@ and put it on your `PATH`.
 - [x] **W1** Environment + scaffold — Foundry provisioned, keyless model call, corpus parses
 - [x] **W2** Ingestion — summarize stats + header-chunk articles, embed, index to Azure AI Search
 - [x] **W3** Hybrid retrieval — Top-3 relevant chunks from console
-- [x] **W4** Chat interface — grounded answers end-to-end
-- [x] **W5** Evaluation — validation-question eval, accuracy 60% → 75% via targeted pre-aggregation (see Decisions)
+- [x] **W4** Chat interface — grounded answers end-to-end with citations
+- [x] **W5** Evaluation — 20-question test set: accuracy 75% (target met), retrieval recall 70% (target ≥80% not yet met) — see `docs/w5-eval-results.md`
 - [ ] **W6** Polish — architecture.md + README updated; diagram, blog post, and making the repo public are still open
 
 ## Notes

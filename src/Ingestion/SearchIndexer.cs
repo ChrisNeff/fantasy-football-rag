@@ -31,8 +31,10 @@ public class SearchIndexer
 
     // Embeds chunk content and upserts by id, so re-running `ingest` on the same
     // corpus overwrites existing documents instead of duplicating them.
+    // onBatchComplete: called after each embed batch with the batch size, for progress reporting.
     public async Task<int> EmbedAndUploadAsync(
-        SearchClient searchClient, EmbeddingClient embeddingClient, IReadOnlyList<Chunk> chunks)
+        SearchClient searchClient, EmbeddingClient embeddingClient, IReadOnlyList<Chunk> chunks,
+        Action<int>? onBatchComplete = null)
     {
         var documents = new List<ChunkDocument>(chunks.Count);
 
@@ -49,7 +51,7 @@ public class SearchIndexer
                 {
                     Id = chunk.Id,
                     Content = chunk.Content,
-                    ContentVector = embeddings[i].ToFloats(),
+                    ContentVector = embeddings[i].ToFloats().ToArray(),
                     SourceType = chunk.SourceType,
                     SourceFile = chunk.SourceFile,
                     Player = chunk.Player,
@@ -58,6 +60,8 @@ public class SearchIndexer
                     Section = chunk.Section,
                 });
             }
+
+            onBatchComplete?.Invoke(batch.Count);
         }
 
         for (int offset = 0; offset < documents.Count; offset += UploadBatchSize)
